@@ -16,6 +16,8 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, TimeZone, Utc, Local};
 
+use colored::*;
+
 pub static TASKS_FILE: &'static str = "todoclist.json";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -24,11 +26,12 @@ struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     author: Option<String>,
     creation: u64,
+    completed: bool,
 }
 
 impl Task {
     fn new(name: String) -> Task {
-        Task {name: name, creation: timestamp(), author: None}
+        Task {name: name, creation: timestamp(), author: None, completed: false}
     }
 }
 
@@ -130,7 +133,7 @@ fn get_list(absolute_path: &PathBuf, auto_init: bool) -> Option<List> {
 
 fn pretty_task(task: (usize, Task)) -> String {
     let local_date: DateTime<Local> = DateTime::from(Utc.timestamp(task.1.creation as i64, 0));
-    format!("#{}: {}\n -> Created @ {}", task.0, task.1.name, local_date.format("%a %b %e %T %Y"))
+    format!("#{}: {}\n \\-> Created @ {}", task.0+1, task.1.name, local_date.format("%a %b %e %r %Y"))
 }
 
 fn main() {
@@ -141,14 +144,17 @@ fn main() {
     .about("A simple file-cli-based todolist")
     .subcommand(SubCommand::with_name("init")
         .about("Initialize a project")
-        // .arg(Arg::with_name("path"))
     )
     .subcommand(SubCommand::with_name("add")
         .about("Add a new task")
         .arg(Arg::with_name("description")
-        .required(true)))
+            .required(true)))
     .subcommand(SubCommand::with_name("list")
         .about("List all tasks"))
+    .subcommand(SubCommand::with_name("complete")
+        .about("Complete a task by its id")
+        .arg(Arg::with_name("id")
+            .required(true)))
     .arg(Arg::with_name("init")
         .short("i")
         .long("auto-init")
@@ -196,25 +202,54 @@ fn main() {
         ("list", _) => {
             match get_list(&absolute_path, auto_init) {
                 Some(list) => {
-                    let a: i64 = 1580093120;
-
-                    let utc = Utc.timestamp(a, 0);
-                    let converted: DateTime<Local> = DateTime::from(utc);
-
-                    // println!("time: {}", converted.format());
-
-                    list.tasks.into_iter().enumerate().map(pretty_task).for_each(|s| println!("{}", s));
-
-                    // list.tasks.into_iter().enumerate().map(|(i, task)| format!("#{}: {} {}", i+1, task.name, DateTime::from<DateTime<Local>>(Utc.timestamp(task.creation as i64, 0)))).for_each(|s| println!("{}", s));
-                    // list.tasks.into_iter().map(|task| task.name).enumerate().for_each(|(i, task)| println!("#{}: {} {}", i+1, task, Utc.timestamp(task.creation_date, 0)));
-                }
+                    let mut iter = list.tasks.into_iter().filter(|task| !task.completed).peekable();
+                    match iter.peek() {
+                        Some(_) => iter.enumerate().map(pretty_task).for_each(|s| println!("{}", s)),
+                        None => println!("List empty, good job!"),
+                    }
+                },
                 None => {}
             }
-        }
+        },
+        ("complete", sub_matches) => {
+            let sub_matches = sub_matches.unwrap();
+            let str_id = sub_matches.value_of("id").unwrap();
+            let mut id: usize = match str_id.parse() {
+                Ok(id) => id,
+                Err(_) => {
+                    eprintln!("The id should be numeric");
+                    process::exit(1);
+                },
+            };
+
+
+            id = match id {
+                0 => {
+                    eprintln!("Task #{} doesn't exists", id);
+                    return
+                },
+                _ => id -1,
+            };
+
+            match get_list(&absolute_path, auto_init) {
+                Some(mut list) => {
+                    match list.tasks.get_mut(id) {
+                        Some(mut task) => {
+                            task.completed = true;
+                            match list.save(&absolute_path) {
+                                Ok(_) => println!("Completed task #{}, very nice!", id+1),
+                                Err(e) => eprintln!("Error completing task: {}", e),
+                            }
+                        },
+                        None => eprintln!("Task #{} doesn't exists", id+1)
+                    }
+                },
+                None => {}
+            };
+        },
         _ => {
             eprintln!("Invalid subcommand, please use '{} help'", exe_name);
             process::exit(1);
         }
     }
-    // println!("{:?}", matches);
 }
