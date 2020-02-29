@@ -26,12 +26,13 @@ struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     author: Option<String>,
     creation: u64,
-    completed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed: Option<u64>,
 }
 
 impl Task {
     fn new(name: String) -> Task {
-        Task {name: name, creation: timestamp(), author: None, completed: false}
+        Task {name: name, creation: timestamp(), author: None, completed: Some(0)}
     }
 }
 
@@ -133,7 +134,33 @@ fn get_list(absolute_path: &PathBuf, auto_init: bool) -> Option<List> {
 
 fn pretty_task(task: (usize, Task)) -> String {
     let local_date: DateTime<Local> = DateTime::from(Utc.timestamp(task.1.creation as i64, 0));
-    format!("#{}: {}\n \\-> Created @ {}", task.0+1, task.1.name, local_date.format("%a %b %e %r %Y"))
+
+    let mut output = String::new();
+
+    output.push_str(&(format!("#{}: ", task.0+1).green().bold().to_string()));
+    output.push_str(&(task.1.name.cyan().bold().to_string()));
+    output.push_str(&"\n \\-> Created at ".magenta().bold().to_string());
+    output.push_str(&(format!("{}", local_date.format("%a %b %e %r %Y")).yellow().bold().to_string()));
+
+    output
+}
+
+fn match_id(str_id: &str) -> usize {
+    let id: usize = match str_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("The id should be numeric");
+            process::exit(1);
+        },
+    };
+
+    match id {
+        0 => {
+            eprintln!("Task #{} doesn't exists", id);
+            process::exit(1);
+        },
+        _ => id -1,
+    }
 }
 
 fn main() {
@@ -153,6 +180,10 @@ fn main() {
         .about("List all tasks"))
     .subcommand(SubCommand::with_name("complete")
         .about("Complete a task by its id")
+        .arg(Arg::with_name("id")
+            .required(true)))
+    .subcommand(SubCommand::with_name("delete")
+        .about("Delete a task by its id")
         .arg(Arg::with_name("id")
             .required(true)))
     .arg(Arg::with_name("init")
@@ -202,11 +233,12 @@ fn main() {
         ("list", _) => {
             match get_list(&absolute_path, auto_init) {
                 Some(list) => {
-                    let mut iter = list.tasks.into_iter().filter(|task| !task.completed).peekable();
+                    let mut iter = list.tasks.into_iter().enumerate().filter(|(_, task)| task.completed.is_none()).peekable();
                     match iter.peek() {
-                        Some(_) => iter.enumerate().map(pretty_task).for_each(|s| println!("{}", s)),
+                        Some(_) => iter.map(pretty_task).for_each(|s| println!("{}", s)),
                         None => println!("List empty, good job!"),
                     }
+                    
                 },
                 None => {}
             }
@@ -214,34 +246,35 @@ fn main() {
         ("complete", sub_matches) => {
             let sub_matches = sub_matches.unwrap();
             let str_id = sub_matches.value_of("id").unwrap();
-            let mut id: usize = match str_id.parse() {
-                Ok(id) => id,
-                Err(_) => {
-                    eprintln!("The id should be numeric");
-                    process::exit(1);
-                },
-            };
-
-
-            id = match id {
-                0 => {
-                    eprintln!("Task #{} doesn't exists", id);
-                    return
-                },
-                _ => id -1,
-            };
+            let id = match_id(str_id);
 
             match get_list(&absolute_path, auto_init) {
                 Some(mut list) => {
                     match list.tasks.get_mut(id) {
                         Some(mut task) => {
-                            task.completed = true;
+                            task.completed = Some(timestamp());
                             match list.save(&absolute_path) {
                                 Ok(_) => println!("Completed task #{}, very nice!", id+1),
                                 Err(e) => eprintln!("Error completing task: {}", e),
                             }
                         },
                         None => eprintln!("Task #{} doesn't exists", id+1)
+                    }
+                },
+                None => {}
+            };
+        },
+        ("delete", sub_matches) => {
+            let sub_matches = sub_matches.unwrap();
+            let str_id = sub_matches.value_of("id").unwrap();
+            let id = match_id(str_id);
+
+            match get_list(&absolute_path, auto_init) {
+                Some(mut list) => {
+                    let task = list.tasks.remove(id);
+                    match list.save(&absolute_path) {
+                        Ok(_) => println!("Deleted task #{}: {}", id+1, task.name),
+                        Err(e) => eprintln!("Error deleting task: {}", e),
                     }
                 },
                 None => {}
